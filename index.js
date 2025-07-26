@@ -49,9 +49,16 @@ function ensureInstallDirectory() {
 }
 
 function installPackageLocally(packageName, additionalArgs) {
-	const npmInstall = spawn('npm', ['install', packageName], {
+	// Windows环境下需要特殊处理npm命令
+	const isWindows = process.platform === 'win32';
+	const npmCommand = isWindows ? 'npm.cmd' : 'npm';
+	
+	console.log(`Using npm command: ${npmCommand}`);
+	
+	const npmInstall = spawn(npmCommand, ['install', packageName], {
 		cwd: INSTALL_DIR,
 		stdio: 'inherit',
+		shell: isWindows, // Windows下使用shell执行
 	});
 
 	npmInstall.on('close', (code) => {
@@ -67,7 +74,17 @@ function installPackageLocally(packageName, additionalArgs) {
 	});
 
 	npmInstall.on('error', (err) => {
-		console.error(`Error installing ${packageName}:`, err);
+		if (err.code === 'ENOENT') {
+			console.error('\nError: npm command not found!');
+			console.error('Please make sure Node.js and npm are properly installed.');
+			console.error('You can download Node.js from: https://nodejs.org/');
+			console.error('\nTroubleshooting steps:');
+			console.error('1. Verify npm is installed: npm --version');
+			console.error('2. Check if npm is in PATH environment variable');
+			console.error('3. Restart terminal after installing Node.js');
+		} else {
+			console.error(`Error installing ${packageName}:`, err);
+		}
 		process.exit(1);
 	});
 }
