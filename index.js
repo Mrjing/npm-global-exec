@@ -41,10 +41,18 @@ function ensureInstallDirectory() {
 			version: '1.0.0',
 			description: 'User directory for npm-global-exec packages',
 			private: true,
-			dependencies: {}
+			dependencies: {},
 		};
 		fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
 		console.log('Initialized package.json in install directory');
+	}
+
+	// 初始化.npmrc文件（如果不存在）
+	const npmrcPath = path.join(INSTALL_DIR, '.npmrc');
+	if (!fs.existsSync(npmrcPath)) {
+		const npmrcContent = 'registry=https://mirrors.cloud.tencent.com/npm/\n';
+		fs.writeFileSync(npmrcPath, npmrcContent);
+		console.log('Initialized .npmrc with Tencent Cloud registry');
 	}
 }
 
@@ -52,10 +60,10 @@ function installPackageLocally(packageName, additionalArgs) {
 	// Windows环境下需要特殊处理npm命令
 	const isWindows = process.platform === 'win32';
 	const npmCommand = isWindows ? 'npm.cmd' : 'npm';
-	
+
 	console.log(`Using npm command: ${npmCommand}`);
-	
-	const npmInstall = spawn(npmCommand, ['install', packageName, '--registry', 'https://mirrors.cloud.tencent.com/npm/'], {
+
+	const npmInstall = spawn(npmCommand, ['install', packageName], {
 		cwd: INSTALL_DIR,
 		stdio: 'inherit',
 		shell: isWindows, // Windows下使用shell执行
@@ -116,7 +124,9 @@ function executePackageBin(packageName, args) {
 	);
 
 	if (!fs.existsSync(packageJsonPath)) {
-		console.error(`Package ${actualPackageName} not found at ${packageJsonPath}`);
+		console.error(
+			`Package ${actualPackageName} not found at ${packageJsonPath}`
+		);
 		process.exit(1);
 	}
 
