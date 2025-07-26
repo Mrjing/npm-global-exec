@@ -55,7 +55,7 @@ function installPackageLocally(packageName, additionalArgs) {
 	
 	console.log(`Using npm command: ${npmCommand}`);
 	
-	const npmInstall = spawn(npmCommand, ['install', packageName], {
+	const npmInstall = spawn(npmCommand, ['install', packageName, '--registry', 'https://mirrors.cloud.tencent.com/npm/'], {
 		cwd: INSTALL_DIR,
 		stdio: 'inherit',
 		shell: isWindows, // Windows下使用shell执行
