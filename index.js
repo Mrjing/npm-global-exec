@@ -7,6 +7,7 @@ const os = require('os');
 
 // 用户目录下的固定安装路径
 const INSTALL_DIR = path.join(os.homedir(), 'cloudbase-mcp');
+const LOG_FILE = path.join(INSTALL_DIR, 'npm-install.log');
 
 function main() {
 	const packageName = process.argv[2];
@@ -18,18 +19,15 @@ function main() {
 
 	const additionalArgs = process.argv.slice(3);
 
-	// 确保安装目录存在
-	ensureInstallDirectory();
+	// 确保安装目录存在（静默模式）
+	ensureInstallDirectorySilent();
 
-	console.log(`Installing ${packageName} in user directory...`);
-
-	// 在用户目录下安装包
+	// 在用户目录下安装包（静默模式）
 	installPackageLocally(packageName, additionalArgs);
 }
 
-function ensureInstallDirectory() {
+function ensureInstallDirectorySilent() {
 	if (!fs.existsSync(INSTALL_DIR)) {
-		console.log(`Creating install directory: ${INSTALL_DIR}`);
 		fs.mkdirSync(INSTALL_DIR, { recursive: true });
 	}
 
@@ -44,7 +42,6 @@ function ensureInstallDirectory() {
 			dependencies: {},
 		};
 		fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
-		console.log('Initialized package.json in install directory');
 	}
 
 	// 初始化.npmrc文件（如果不存在）
@@ -52,7 +49,6 @@ function ensureInstallDirectory() {
 	if (!fs.existsSync(npmrcPath)) {
 		const npmrcContent = 'registry=https://mirrors.cloud.tencent.com/npm/\n';
 		fs.writeFileSync(npmrcPath, npmrcContent);
-		console.log('Initialized .npmrc with Tencent Cloud registry');
 	}
 }
 
@@ -61,37 +57,47 @@ function installPackageLocally(packageName, additionalArgs) {
 	const isWindows = process.platform === 'win32';
 	const npmCommand = isWindows ? 'npm.cmd' : 'npm';
 
-	console.log(`Using npm command: ${npmCommand}`);
+	// 写入安装开始日志
+	const timestamp = new Date().toISOString();
+	fs.appendFileSync(LOG_FILE, `\n[${timestamp}] Installing ${packageName}...\n`);
 
 	const npmInstall = spawn(npmCommand, ['install', packageName], {
 		cwd: INSTALL_DIR,
-		stdio: 'inherit',
+		stdio: ['ignore', 'pipe', 'pipe'], // 使用pipe模式捕获输出
 		shell: isWindows, // Windows下使用shell执行
 	});
 
+	// 将输出写入日志文件
+	npmInstall.stdout.on('data', (data) => {
+		fs.appendFileSync(LOG_FILE, data);
+	});
+
+	npmInstall.stderr.on('data', (data) => {
+		fs.appendFileSync(LOG_FILE, data);
+	});
+
 	npmInstall.on('close', (code) => {
+		const endTimestamp = new Date().toISOString();
 		if (code !== 0) {
-			console.error(`Failed to install ${packageName} (exit code: ${code})`);
+			fs.appendFileSync(LOG_FILE, `[${endTimestamp}] Failed to install ${packageName} (exit code: ${code})\n`);
+			console.error(`Failed to install ${packageName} (exit code: ${code}). Check log: ${LOG_FILE}`);
 			process.exit(1);
 		}
 
-		console.log(`Successfully installed ${packageName}`);
+		fs.appendFileSync(LOG_FILE, `[${endTimestamp}] Successfully installed ${packageName}\n`);
 
 		// 查找并执行包的bin文件
 		executePackageBin(packageName, additionalArgs);
 	});
 
 	npmInstall.on('error', (err) => {
+		const errorTimestamp = new Date().toISOString();
+		fs.appendFileSync(LOG_FILE, `[${errorTimestamp}] Error: ${err.message}\n`);
+		
 		if (err.code === 'ENOENT') {
-			console.error('\nError: npm command not found!');
-			console.error('Please make sure Node.js and npm are properly installed.');
-			console.error('You can download Node.js from: https://nodejs.org/');
-			console.error('\nTroubleshooting steps:');
-			console.error('1. Verify npm is installed: npm --version');
-			console.error('2. Check if npm is in PATH environment variable');
-			console.error('3. Restart terminal after installing Node.js');
+			console.error('Error: npm command not found! Check log:', LOG_FILE);
 		} else {
-			console.error(`Error installing ${packageName}:`, err);
+			console.error(`Error installing ${packageName}. Check log: ${LOG_FILE}`);
 		}
 		process.exit(1);
 	});
@@ -154,11 +160,13 @@ function executePackageBin(packageName, args) {
 	);
 
 	if (!fs.existsSync(fullBinPath)) {
+		fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] Bin file not found: ${fullBinPath}\n`);
 		console.error(`Bin file not found: ${fullBinPath}`);
 		process.exit(1);
 	}
 
-	console.log(`Executing ${actualPackageName}...`);
+	// 记录执行信息到日志文件（而不是console输出）
+	fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] Executing ${actualPackageName}...\n`);
 
 	// 执行bin文件
 	const childProcess = spawn('node', [fullBinPath, ...args], {
