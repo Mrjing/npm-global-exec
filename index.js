@@ -52,14 +52,23 @@ function ensureInstallDirectorySilent() {
 	}
 }
 
-function installPackageLocally(packageName, additionalArgs) {
+function installPackageLocally(packageName, additionalArgs, retryCount = 0) {
 	// Windows环境下需要特殊处理npm命令
 	const isWindows = process.platform === 'win32';
 	const npmCommand = isWindows ? 'npm.cmd' : 'npm';
 
+	// 如果是重试，先清理可能的残留文件
+	if (retryCount > 0) {
+		cleanupNodeModules();
+	}
+
 	// 写入安装开始日志
 	const timestamp = new Date().toISOString();
-	fs.appendFileSync(LOG_FILE, `\n[${timestamp}] Installing ${packageName}...\n`);
+	const retryInfo = retryCount > 0 ? ` (retry ${retryCount})` : '';
+	fs.appendFileSync(
+		LOG_FILE,
+		`\n[${timestamp}] Installing ${packageName}${retryInfo}...\n`
+	);
 
 	const npmInstall = spawn(npmCommand, ['install', packageName], {
 		cwd: INSTALL_DIR,
@@ -79,12 +88,32 @@ function installPackageLocally(packageName, additionalArgs) {
 	npmInstall.on('close', (code) => {
 		const endTimestamp = new Date().toISOString();
 		if (code !== 0) {
-			fs.appendFileSync(LOG_FILE, `[${endTimestamp}] Failed to install ${packageName} (exit code: ${code})\n`);
-			console.error(`Failed to install ${packageName} (exit code: ${code}). Check log: ${LOG_FILE}`);
+			// 检查是否是目录不为空的错误，如果是且重试次数少于3次，则重试
+			if (retryCount < 3 && shouldRetryInstall(code)) {
+				fs.appendFileSync(
+					LOG_FILE,
+					`[${endTimestamp}] Install failed (exit code: ${code}), retrying...\n`
+				);
+				setTimeout(() => {
+					installPackageLocally(packageName, additionalArgs, retryCount + 1);
+				}, 1000 * (retryCount + 1)); // 递增延迟
+				return;
+			}
+
+			fs.appendFileSync(
+				LOG_FILE,
+				`[${endTimestamp}] Failed to install ${packageName} (exit code: ${code})\n`
+			);
+			console.error(
+				`Failed to install ${packageName} (exit code: ${code}). Check log: ${LOG_FILE}`
+			);
 			process.exit(1);
 		}
 
-		fs.appendFileSync(LOG_FILE, `[${endTimestamp}] Successfully installed ${packageName}\n`);
+		fs.appendFileSync(
+			LOG_FILE,
+			`[${endTimestamp}] Successfully installed ${packageName}\n`
+		);
 
 		// 查找并执行包的bin文件
 		executePackageBin(packageName, additionalArgs);
@@ -93,7 +122,7 @@ function installPackageLocally(packageName, additionalArgs) {
 	npmInstall.on('error', (err) => {
 		const errorTimestamp = new Date().toISOString();
 		fs.appendFileSync(LOG_FILE, `[${errorTimestamp}] Error: ${err.message}\n`);
-		
+
 		if (err.code === 'ENOENT') {
 			console.error('Error: npm command not found! Check log:', LOG_FILE);
 		} else {
@@ -101,6 +130,30 @@ function installPackageLocally(packageName, additionalArgs) {
 		}
 		process.exit(1);
 	});
+}
+
+function shouldRetryInstall(exitCode) {
+	// 190: ENOTEMPTY 目录不为空错误
+	return exitCode === 190;
+}
+
+function cleanupNodeModules() {
+	const nodeModulesPath = path.join(INSTALL_DIR, 'node_modules');
+	if (fs.existsSync(nodeModulesPath)) {
+		try {
+			fs.appendFileSync(
+				LOG_FILE,
+				`[${new Date().toISOString()}] Cleaning up node_modules...\n`
+			);
+			// 尝试删除node_modules目录（可能失败，但不影响继续）
+			fs.rmSync(nodeModulesPath, { recursive: true, force: true });
+		} catch (err) {
+			fs.appendFileSync(
+				LOG_FILE,
+				`[${new Date().toISOString()}] Cleanup warning: ${err.message}\n`
+			);
+		}
+	}
 }
 
 function executePackageBin(packageName, args) {
@@ -160,13 +213,19 @@ function executePackageBin(packageName, args) {
 	);
 
 	if (!fs.existsSync(fullBinPath)) {
-		fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] Bin file not found: ${fullBinPath}\n`);
+		fs.appendFileSync(
+			LOG_FILE,
+			`[${new Date().toISOString()}] Bin file not found: ${fullBinPath}\n`
+		);
 		console.error(`Bin file not found: ${fullBinPath}`);
 		process.exit(1);
 	}
 
 	// 记录执行信息到日志文件（而不是console输出）
-	fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] Executing ${actualPackageName}...\n`);
+	fs.appendFileSync(
+		LOG_FILE,
+		`[${new Date().toISOString()}] Executing ${actualPackageName}...\n`
+	);
 
 	// 执行bin文件
 	const childProcess = spawn('node', [fullBinPath, ...args], {
